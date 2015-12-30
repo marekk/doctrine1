@@ -45,7 +45,7 @@ class Doctrine_Migration_Builder extends Doctrine_Builder
      *
      * @var string $suffix
      */
-    private $suffix = '.php';
+    protected $suffix = '.php';
 
     /**
      * Instance of the migration class for the migration classes directory
@@ -486,9 +486,7 @@ END;
      */
     public function generateMigrationClass($className, $options = array(), $up = null, $down = null, $return = false)
     {
-        $className = Doctrine_Inflector::urlize($className);
-        $className = str_replace('-', '_', $className);
-        $className = Doctrine_Inflector::classify($className);
+        $className = $this->generateClassName($className);
 
         if ($return || ! $this->getMigrationsPath()) {
             return $this->buildMigrationClass($className, null, $options, $up, $down);
@@ -497,8 +495,7 @@ END;
                 throw new Doctrine_Migration_Exception('You must specify the path to your migrations.');
             }
 
-            $next = time() + $this->migration->getNextMigrationClassVersion();
-            $fileName = $next . '_' . Doctrine_Inflector::tableize($className) . $this->suffix;
+            $fileName = $this->generateFileName($className);
 
             $class = $this->buildMigrationClass($className, $fileName, $options, $up, $down);
 
@@ -514,6 +511,21 @@ END;
 
             return true;
         }
+    }
+
+    protected function generateClassName($className)
+    {
+        $className = Doctrine_Inflector::urlize($className);
+        $className = str_replace('-', '_', $className);
+        $className = Doctrine_Inflector::classify($className);
+        return $className;
+    }
+
+    protected function generateFileName($className)
+    {
+        $next = time() + $this->migration->getNextMigrationClassVersion();
+        $fileName = $next . '_' . Doctrine_Inflector::tableize($className) . $this->suffix;
+        return $fileName;
     }
 
     /**

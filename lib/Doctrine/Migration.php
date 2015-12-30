@@ -552,7 +552,32 @@ class Doctrine_Migration
         $this->_migrationTableCreated = true;
 
         try {
-            $this->_connection->export->createTable($this->_migrationTableName, array('version' => array('type' => 'integer', 'size' => 11)));
+            if($this->_connection->getOption('migrations_record_steps')) {
+                $this->_connection->export->createTable($this->_migrationTableName,
+                    array(
+                        'id' =>
+                            array(
+                                'type' => 'integer',
+                                'fixed' => '0',
+                                'unsigned' => '',
+                                'primary' => '1',
+                                'autoincrement' => '1',
+                                'length' => '4',
+                            ),
+                        'version' => array('type' => 'integer', 'size' => 11),
+                        'description' => array('type' => 'string', 'length' => 255),
+                        'class_name' => array('type' => 'string', 'length' => 255),
+                        'installed_at' =>
+                            array(
+                                'notnull' => '1',
+                                'type' => 'timestamp',
+                                'length' => '25',
+                            ),
+                    ));
+            } else {
+                $this->_connection->export->createTable($this->_migrationTableName,
+                    array('version' => array('type' => 'integer', 'size' => 11)));
+            }
 
             return true;
         } catch(Exception $e) {

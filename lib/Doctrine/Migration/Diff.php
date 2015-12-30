@@ -130,7 +130,7 @@ class Doctrine_Migration_Diff
      */
     public function generateMigrationClasses()
     {
-        $builder = new Doctrine_Migration_Builder($this->_migration);
+        $builder = Doctrine_Core::getMigrationsBuilder($this->_migration);
 
         return $builder->generateMigrationsFromDiff($this);
     }

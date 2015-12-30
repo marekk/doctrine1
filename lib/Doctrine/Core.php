@@ -1034,7 +1034,7 @@ class Doctrine_Core
      */
     public static function generateMigrationClass($className, $migrationsPath)
     {
-        $builder = new Doctrine_Migration_Builder($migrationsPath);
+        $builder = self::getMigrationsBuilder($migrationsPath);
 
         return $builder->generateMigrationClass($className);
     }
@@ -1048,7 +1048,7 @@ class Doctrine_Core
      */
     public static function generateMigrationsFromDb($migrationsPath)
     {
-        $builder = new Doctrine_Migration_Builder($migrationsPath);
+        $builder = self::getMigrationsBuilder($migrationsPath);
 
         return $builder->generateMigrationsFromDb();
     }
@@ -1063,9 +1063,18 @@ class Doctrine_Core
      */
     public static function generateMigrationsFromModels($migrationsPath, $modelsPath = null, $modelLoading = null)
     {
-        $builder = new Doctrine_Migration_Builder($migrationsPath);
+        $builder = self::getMigrationsBuilder($migrationsPath);
 
         return $builder->generateMigrationsFromModels($modelsPath, $modelLoading);
+    }
+
+    public static function getMigrationsBuilder($migrationsPath = null)
+    {
+        if(Doctrine_Manager::getInstance()->getCurrentConnection()->getOption('migrations_record_steps')) {
+            return new Doctrine_Migration_BuilderStepping($migrationsPath);
+        } else {
+            return new Doctrine_Migration_Builder($migrationsPath);
+        }
     }
 
     /**
