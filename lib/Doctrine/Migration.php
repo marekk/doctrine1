@@ -552,7 +552,7 @@ class Doctrine_Migration
         $this->_migrationTableCreated = true;
 
         try {
-            if($this->_connection->getOption('migrations_record_steps')) {
+            if($this->_connection->getAttribute(Doctrine_Core::ATTR_MIGRATION_RECORD_STEPS)) {
                 $this->_connection->export->createTable($this->_migrationTableName,
                     array(
                         'id' =>

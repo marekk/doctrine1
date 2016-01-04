@@ -214,6 +214,7 @@ class Doctrine_Core
     const ATTR_USE_TABLE_IDENTITY_MAP       = 182;
     const ATTR_TABLE_CACHE                  = 183;
     const ATTR_TABLE_CACHE_LIFESPAN         = 184;
+    const ATTR_MIGRATION_RECORD_STEPS         = 185;
 
 
     /**
@@ -1070,7 +1071,7 @@ class Doctrine_Core
 
     public static function getMigrationsBuilder($migrationsPath = null)
     {
-        if(Doctrine_Manager::getInstance()->getCurrentConnection()->getOption('migrations_record_steps')) {
+        if(Doctrine_Manager::getInstance()->getCurrentConnection()->getAttribute(Doctrine_Core::ATTR_MIGRATION_RECORD_STEPS)) {
             return new Doctrine_Migration_BuilderStepping($migrationsPath);
         } else {
             return new Doctrine_Migration_Builder($migrationsPath);
