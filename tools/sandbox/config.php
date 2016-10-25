@@ -23,7 +23,7 @@
  * Doctrine Configuration File
  *
  * This is a sample implementation of Doctrine
- * 
+ *
  * @package     Doctrine
  * @subpackage  Config
  * @license     http://www.opensource.org/licenses/lgpl-license.php LGPL
@@ -44,13 +44,13 @@ define('YAML_SCHEMA_PATH', SANDBOX_PATH . DIRECTORY_SEPARATOR . 'schema');
 define('DB_PATH', SANDBOX_PATH . DIRECTORY_SEPARATOR . 'sandbox.db');
 define('DSN', 'sqlite:///' . DB_PATH);
 
-require_once(DOCTRINE_PATH . DIRECTORY_SEPARATOR . 'Doctrine.php');
+require_once(DOCTRINE_PATH . DIRECTORY_SEPARATOR . 'Doctrine/Core.php');
 
 Doctrine_Core::setExtensionsPath(dirname(__FILE__).'/extensions');
 
-spl_autoload_register(array('Doctrine', 'autoload'));
-spl_autoload_register(array('Doctrine', 'modelsAutoload'));
-spl_autoload_register(array('Doctrine', 'extensionsAutoload'));
+spl_autoload_register(array('Doctrine_Core', 'autoload'));
+spl_autoload_register(array('Doctrine_Core', 'modelsAutoload'));
+spl_autoload_register(array('Doctrine_Core', 'extensionsAutoload'));
 
 $manager = Doctrine_Manager::getInstance();
 $manager->openConnection(DSN, 'doctrine');
