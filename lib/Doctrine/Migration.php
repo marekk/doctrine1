@@ -43,6 +43,11 @@ class Doctrine_Migration
               $_errors = array(),
               $_process;
 
+    /**
+     * @var string Detected style (
+     */
+    protected $_migrationTableStyle;
+
     protected static $_migrationClassesForDirectories = array();
 
     /**
@@ -151,15 +156,45 @@ class Doctrine_Migration
                     $array = array_diff(get_declared_classes(), $classes);
                     $className = end($array);
 
+                    $migration_style = null;
+
                     if ($className) {
-                        $e = explode('_', $file->getFileName());
+                        // check if filename is correct format and throw exception if not
+                        if (preg_match('/^[0-9]{10}_/', $file->getFileName()))
+                        {
+                            if(is_null($migration_style)) {
+                                $migration_style = 'number';
+                            } elseif($migration_style !== 'number') {
+                                throw new Doctrine_Migration_Exception('Illegal mixing of numbered and steps migration files, detected for ' . $file->getFileName());
+                            }
+                            $e = explode('_', $file->getFileName());
+                        }
+                        elseif (preg_match('/^V[0-9]{8}__/', $file->getFileName()))
+                        {
+                            if(is_null($migration_style)) {
+                                $migration_style = 'steps';
+                            } elseif($migration_style !== 'steps') {
+                                throw new Doctrine_Migration_Exception('Illegal mixing of numbered and stepped migration files, detected for ' . $file->getFileName());
+                            }
+                            $e = explode('__', $file->getFileName());
+                        }
                         $timestamp = $e[0];
+
+                        if (isset($classesToLoad[$timestamp]))
+                        {
+                            throw new Doctrine_Migration_Exception(sprintf('Timestamp %s already set, offending file: %s', $timestamp, $file->getFileName()));
+                        }
 
                         $classesToLoad[$timestamp] = array('className' => $className, 'path' => $file->getPathName());
                     }
                 }
             }
         }
+
+        if (isset($migration_style)) {
+            $this->_migrationTableStyle = $migration_style;
+        }
+
         ksort($classesToLoad, SORT_NUMERIC);
         foreach ($classesToLoad as $class) {
             $this->loadMigrationClass($class['className'], $class['path']);
@@ -432,6 +467,57 @@ class Doctrine_Migration
         }
 
         throw new Doctrine_Migration_Exception('Could not find migration class for migration step: '.$num);
+    }
+
+    public function changeMigrationVersionTableStyle($style)
+    {
+        if ($this->_migrationTableStyle === $style)
+        {
+            return false;
+        }
+
+        switch($style)
+        {
+            case 'steps':
+                $this->changeMigrationVersionTableStyleToSteps();
+                break;
+            case 'number':
+                $this->changeMigrationVersionTableStyleToNumber();
+                break;
+            default:
+                throw new Doctrine_Migration_Exception('Valid styles are "number" and "steps"');
+        }
+    }
+
+    protected function changeMigrationVersionTableStyleToSteps()
+    {
+        $i = 0;
+        foreach(self::$_migrationClassesForDirectories as $dir => $migration)
+        {
+            $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir),
+                RecursiveIteratorIterator::LEAVES_ONLY);
+            foreach ($it as $file) {
+                /* @var $file SplFileInfo */
+                if ($file->getExtension() === 'php') {
+                    $basename = $file->getBasename('.php');
+                    if (preg_match('/^([0-9]{10})_([a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*)$/', $basename, $m)) {
+                        $newname = 'V' . date('Ymd', $m[1]) . '__' . $m[2];
+                        echo "$basename => $newname ... ";
+                        $newcontent = preg_replace('/(class\s+)[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*/', '$1' . $newname, file_get_contents($file->getRealPath()));
+                        $path = $file->getPath();
+                        file_put_contents($file->getPath() . '/' . $newname . '.php', $newcontent);
+                        unlink($file->getPathname());
+                        echo "ok\n";
+                        $i++;
+                    }
+                }
+            }
+        }
+    }
+
+    protected function changeMigrationVersionTableStyleToNumber()
+    {
+        throw new Doctrine_Exception('Not implemented');
     }
 
     /**
