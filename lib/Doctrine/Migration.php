@@ -83,6 +83,9 @@ class Doctrine_Migration
         }
     }
 
+    /**
+     * @return Doctrine_Connection
+     */
     public function getConnection()
     {
         return $this->_connection;
@@ -165,11 +168,11 @@ class Doctrine_Migration
                             if(is_null($migration_style)) {
                                 $migration_style = 'number';
                             } elseif($migration_style !== 'number') {
-                                throw new Doctrine_Migration_Exception('Illegal mixing of numbered and steps migration files, detected for ' . $file->getFileName());
+                                throw new Doctrine_Migration_Exception('Illegal mixing of numbered and stepped migration files, detected for ' . $file->getFileName());
                             }
                             $e = explode('_', $file->getFileName());
                         }
-                        elseif (preg_match('/^V[0-9]{8}__/', $file->getFileName()))
+                        elseif (preg_match('/^V[0-9]{14}__/', $file->getFileName()))
                         {
                             if(is_null($migration_style)) {
                                 $migration_style = 'steps';
@@ -177,6 +180,8 @@ class Doctrine_Migration
                                 throw new Doctrine_Migration_Exception('Illegal mixing of numbered and stepped migration files, detected for ' . $file->getFileName());
                             }
                             $e = explode('__', $file->getFileName());
+                        } else {
+                            throw new Doctrine_Migration_Exception(sprintf('Incorrect file format, offending file: %s', $timestamp, $file->getFileName()));
                         }
                         $timestamp = $e[0];
 
@@ -276,13 +281,27 @@ class Doctrine_Migration
     {
         $this->_createMigrationTable();
 
-        $result = $this->_connection->fetchColumn("SELECT version FROM " . $this->_migrationTableName);
+        $result = $this->_connection->fetchColumn("SELECT MAX(version) FROM " . $this->_migrationTableName);
 
         return isset($result[0]) ? $result[0]:0;
     }
 
     /**
-     * hReturns true/false for whether or not this database has been migrated in the past
+     * Get the current applied migrations
+     *
+     * @return string[]
+     */
+    public function getCurrentSteps()
+    {
+        $this->_createMigrationTable();
+
+        $result = $this->getConnection()->fetchColumn("SELECT class_name FROM " . $this->_migrationTableName);
+
+        return $result;
+    }
+
+    /**
+     * Returns true/false for whether or not this database has been migrated in the past
      *
      * @return boolean $migrated
      */
@@ -354,13 +373,17 @@ class Doctrine_Migration
         $this->_connection->beginTransaction();
 
         try {
-            // If nothing specified then lets assume we are migrating from
-            // the current version to the latest version
-            if ($to === null) {
-                $to = $this->getLatestVersion();
-            }
 
-            $this->_doMigrate($to);
+            if ($this->getConnection()->getAttribute(Doctrine_Core::ATTR_MIGRATION_RECORD_STEPS)) {
+                $to = $this->_doMigrateSteps($to);
+            } else {
+                // If nothing specified then lets assume we are migrating from
+                // the current version to the latest version
+                if ($to === null) {
+                    $to = $this->getLatestVersion();
+                }
+                $this->_doMigrate($to);
+            }
         } catch (Exception $e) {
             $this->addError($e);
         }
@@ -383,7 +406,9 @@ class Doctrine_Migration
                 }
             } else {
                 $this->_connection->commit();
-                $this->setCurrentVersion($to);
+                if (!$this->getConnection()->getAttribute(Doctrine_Core::ATTR_MIGRATION_RECORD_STEPS)) {
+                    $this->setCurrentVersion($to);
+                }
                 return $to;
             }
         }
@@ -461,7 +486,9 @@ class Doctrine_Migration
      */
     public function getMigrationClass($num)
     {
-        if (isset($this->_migrationClasses[$num])) {
+        if ($this->getConnection()->getAttribute(Doctrine_Core::ATTR_MIGRATION_RECORD_STEPS)) {
+            return new $num;
+        } elseif (isset($this->_migrationClasses[$num])) {
             $className = $this->_migrationClasses[$num];
             return new $className();
         }
@@ -469,7 +496,7 @@ class Doctrine_Migration
         throw new Doctrine_Migration_Exception('Could not find migration class for migration step: '.$num);
     }
 
-    public function changeMigrationVersionTableStyle($style)
+    public function changeMigrationVersionTableStyle($style, $path)
     {
         if ($this->_migrationTableStyle === $style)
         {
@@ -479,7 +506,7 @@ class Doctrine_Migration
         switch($style)
         {
             case 'steps':
-                $this->changeMigrationVersionTableStyleToSteps();
+                $this->changeMigrationVersionTableStyleToSteps($path);
                 break;
             case 'number':
                 $this->changeMigrationVersionTableStyleToNumber();
@@ -489,30 +516,63 @@ class Doctrine_Migration
         }
     }
 
-    protected function changeMigrationVersionTableStyleToSteps()
+    protected function changeMigrationVersionTableStyleToSteps($path)
     {
-        $i = 0;
-        foreach(self::$_migrationClassesForDirectories as $dir => $migration)
-        {
-            $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir),
-                RecursiveIteratorIterator::LEAVES_ONLY);
-            foreach ($it as $file) {
-                /* @var $file SplFileInfo */
-                if ($file->getExtension() === 'php') {
-                    $basename = $file->getBasename('.php');
-                    if (preg_match('/^([0-9]{10})_([a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*)$/', $basename, $m)) {
-                        $newname = 'V' . date('Ymd', $m[1]) . '__' . $m[2];
+        $connection = $this->getConnection();
+        $currentVersion = $this->getCurrentVersion();
+        if (!$connection->getAttribute(Doctrine_Core::ATTR_MIGRATION_RECORD_STEPS)) {
+            // first perform a dry run to check if there's mismatch
+            $steps = $this->changeMigrationVersionTableStyleToStepsClasses($path, true);
+            $currentVersion = $this->getCurrentVersion();
+            if ($currentVersion != count($steps)) {
+                throw new Doctrine_Migration_Exception('Current version of database does not match number of migration classes, fix this before continuing');
+            }
+        }
+
+        $steps = $this->changeMigrationVersionTableStyleToStepsClasses($path);
+
+        if (!$connection->getAttribute(Doctrine_Core::ATTR_MIGRATION_RECORD_STEPS)) {
+            $connection->export->dropTable($this->_migrationTableName);
+            $connection->setAttribute(Doctrine_Core::ATTR_MIGRATION_RECORD_STEPS, true);
+            $this->_migrationTableCreated = false;
+            $this->_createMigrationTable();
+            $sht = $connection->prepare('insert into ' . $this->_migrationTableName . ' (description, class_name, installed_at) values (?, ?, ?)');
+            foreach ($steps as $installed_at => $class) {
+                list($null, $description) = explode('__', $class);
+                $sht->execute([$description, $class, $installed_at]);
+            }
+            echo "-----------------------------------\n" . $this->_migrationTableName . " converted to 'steps' style, update your configuration\n";
+        }
+    }
+
+    private function changeMigrationVersionTableStyleToStepsClasses($path, $dry = false)
+    {
+        $steps = [];
+        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path),
+            RecursiveIteratorIterator::LEAVES_ONLY);
+        foreach ($it as $file) {
+            /* @var $file SplFileInfo */
+            if ($file->getExtension() === 'php') {
+                $basename = $file->getBasename('.php');
+                if (preg_match('/^([0-9]{10})_([a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*)$/', $basename, $m)) {
+                    $datetime = date('YmdHis', $m[1]);
+                    $newname = 'V' . $datetime . '__' . $m[2];
+                    if ($dry === false) {
                         echo "$basename => $newname ... ";
-                        $newcontent = preg_replace('/(class\s+)[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*/', '$1' . $newname, file_get_contents($file->getRealPath()));
+                        $newcontent =
+                            preg_replace('/(class\s+)[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*/', '$1' . $newname,
+                                file_get_contents($file->getRealPath()));
                         $path = $file->getPath();
                         file_put_contents($file->getPath() . '/' . $newname . '.php', $newcontent);
                         unlink($file->getPathname());
                         echo "ok\n";
-                        $i++;
                     }
+                    $steps[date('Y-m-d H:i:s', $m[1])] = $newname;
                 }
             }
         }
+
+        return $steps;
     }
 
     protected function changeMigrationVersionTableStyleToNumber()
@@ -574,18 +634,69 @@ class Doctrine_Migration
     }
 
     /**
+     * Do the actual migration process, steps version
+     *
+     * @param  integer $to
+     * @return integer $to
+     * @throws Doctrine_Exception
+     */
+    protected function _doMigrateSteps($to)
+    {
+        $migrations = $this->getMigrationClasses();
+
+        if ($to && !in_array($to, $migrations)) {
+            throw new Doctrine_Migration_Exception('Requested migration does not exist: ' . $to);
+        }
+
+        $from = $this->getCurrentSteps();
+        $runCount = 0;
+
+        if ($to) {
+            rsort($migrations);
+            $direction = 'down';
+
+            foreach ($migrations as $class) {
+                if ($class === $to) {
+                    break;
+                }
+                if (in_array($class, $from)) {
+                    $this->_doMigrateStep($direction, $class);
+                    $runCount++;
+                }
+            }
+        }
+
+        sort($migrations);
+        $direction = 'up';
+        foreach ($migrations as $class) {
+            if (!in_array($class, $from)) {
+                $this->_doMigrateStep($direction, $class);
+                $runCount++;
+            }
+            if ($class === $to) {
+                break;
+            }
+        }
+
+        if ($runCount === 0) {
+            throw new Doctrine_Migration_Exception('Already at version # ' . $class);
+        }
+
+        return $class;
+    }
+
+    /**
      * Perform a single migration step. Executes a single migration class and
      * processes the changes
      *
      * @param string $direction Direction to go, 'up' or 'down'
-     * @param integer $num
+     * @param integer $class
      * @return void
      */
-    protected function _doMigrateStep($direction, $num)
+    protected function _doMigrateStep($direction, $class)
     {
         try {
-            $migration = $this->getMigrationClass($num);
-
+            $migration = $this->getMigrationClass($class);
             $method = 'pre' . $direction;
             $migration->$method();
 
@@ -617,9 +728,30 @@ class Doctrine_Migration
 
             $method = 'post' . $direction;
             $migration->$method();
+
+            if ($direction === 'up') {
+                $this->recordStep($class);
+            } else {
+                $this->removeStep($class);
+            }
         } catch (Exception $e) {
             $this->addError($e);
         }
+    }
+
+    protected function recordStep($class)
+    {
+        $sht = $this->getConnection()->prepare('insert into ' . $this->_migrationTableName
+            . ' (description, class_name, installed_at) values (?, ?, now())');
+        $description = explode('__', $class);
+        $description = str_replace('_', ' ', $description[1]);
+        $sht->execute([$description, $class]);
+    }
+
+    protected function removeStep($class)
+    {
+        $sht = $this->getConnection()->prepare('delete from ' . $this->_migrationTableName . ' where class_name = ?');
+        $sht->execute([$class]);
     }
 
     /**
@@ -641,7 +773,7 @@ class Doctrine_Migration
             if($this->_connection->getAttribute(Doctrine_Core::ATTR_MIGRATION_RECORD_STEPS)) {
                 $this->_connection->export->createTable($this->_migrationTableName,
                     array(
-                        'id' =>
+                        'version' =>
                             array(
                                 'type' => 'integer',
                                 'fixed' => '0',
@@ -650,7 +782,6 @@ class Doctrine_Migration
                                 'autoincrement' => '1',
                                 'length' => '4',
                             ),
-                        'version' => array('type' => 'integer', 'size' => 11),
                         'description' => array('type' => 'string', 'length' => 255),
                         'class_name' => array('type' => 'string', 'length' => 255),
                         'installed_at' =>

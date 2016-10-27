@@ -18,9 +18,9 @@ class MigrateChangeStyle extends Doctrine_Task
         if (empty($path)) {
             $path = $this->getArgument('migrations_path');
         }
-        $migration = new Doctrine_Migration($path);
+        $migration = new Doctrine_Migration();
 
-        $result = $migration->changeMigrationVersionTableStyle($this->getArgument('style'));
+        $result = $migration->changeMigrationVersionTableStyle($this->getArgument('style'), $path);
 
         if ($result) {
             $this->notify('style successfully changed to ' . $this->getArgument('style'));
